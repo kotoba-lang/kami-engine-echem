@@ -4,8 +4,8 @@
  ;; efficiency (0.53) into a polarization-curve result → real H2 consumption.
  ;; The proper "combustion" analog for EV/FCEV is electrochemistry. A detailed
  ;; kami-echem CFD/electrochem model registers :pemfc-cfd on the same contract.
- :deps {io.github.com-junkawasaki/datom-clj       {:local/root "../datom-clj"}
-        io.github.com-junkawasaki/cae-solver-clj  {:local/root "../cae-solver-clj"}}
+ :deps {io.github.kotoba-lang/datom       {:local/root "../datom"}
+        io.github.kotoba-lang/cae-solver  {:local/root "../cae-solver"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
