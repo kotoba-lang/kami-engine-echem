@@ -26,3 +26,11 @@
 
 (deftest datafied
   (is (pos? (:datom-count (fc/run {:case/id "sedan/fc"})))))
+
+(deftest effpct-datom-is-a-real-percent
+  ;; effPct must be eff-LHV expressed as a 0-100 percent, not the fraction
+  ;; scaled by 1000 -- a fuel cell can't be 520% efficient.
+  (let [r (fc/run {:case/id "pct-check"})
+        eff-pct (some (fn [[_ attr v]] (when (= attr :echem.FuelCellRun/effPct) v)) (:datoms r))]
+    (is (= (Math/round (* 100.0 (:eff-LHV r))) eff-pct))
+    (is (< 0 eff-pct 100) (str "effPct=" eff-pct " must be a sane percent, not eff*1000"))))

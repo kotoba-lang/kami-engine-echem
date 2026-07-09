@@ -42,7 +42,7 @@
         ent (d/entity "echem" :FuelCellRun cid
                       {:cells   (:cells r)
                        :vCellMv (Math/round (* 1000.0 (:v-cell r)))
-                       :effPct  (Math/round (* 1000.0 (:eff-LHV r)))
+                       :effPct  (Math/round (* 100.0 (:eff-LHV r)))
                        :stackKW (Math/round (double (:stack-kW r)))})
         led (d/log [ent])]
     (assoc r :datoms (:datoms led) :datom-count (:count led))))
