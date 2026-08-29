@@ -34,3 +34,62 @@
         eff-pct (some (fn [[_ attr v]] (when (= attr :echem.FuelCellRun/effPct) v)) (:datoms r))]
     (is (= (Math/round (* 100.0 (:eff-LHV r))) eff-pct))
     (is (< 0 eff-pct 100) (str "effPct=" eff-pct " must be a sane percent, not eff*1000"))))
+
+;; ---- operating-point contract: curve / solve-at-power ----
+
+(deftest curve-is-a-proper-polarization-sweep
+  (testing "curve is sorted by i-density, voltage falls, power has an interior peak"
+    (let [c (fc/curve {} 40)]
+      (is (= 40 (count c)))
+      (is (apply < (map :i-density c)) "i-density strictly increasing")
+      (is (apply > (map :v-cell c)) "cell voltage monotonically falling")
+      ;; single-peaked power: peak is interior, both neighbors of the max index below it
+      (let [pkw (mapv :stack-kW c)
+            k   (apply max-key pkw (range (count pkw)))]
+        (is (pos? k))
+        (is (< k (dec (count pkw))))))))
+
+(deftest solve-at-power-hits-the-demand
+  (testing "the solved operating point delivers the requested stack power"
+    (let [target 80.0
+          r (fc/solve-at-power {} target)]
+      (is (:feasible r))
+      (is (< (Math/abs (- (:stack-kW r) target)) 1.0e-3)
+          (str "got " (:stack-kW r) " kW, wanted " target))
+      ;; efficiency at 80 kW must land in the PEM band
+      (is (< 0.45 (:eff-LHV r) 0.68))
+      ;; the operating point must lie ON the polarization curve
+      (is (< (Math/abs (- (:v-cell r)
+                          (:v-cell (fc/solve {:i-density (:i-density r)}))))
+             1.0e-9)))))
+
+(deftest part-load-is-more-efficient
+  (testing "lower demanded power → lower current density → higher efficiency"
+    (let [lo (fc/solve-at-power {} 40.0)
+          hi (fc/solve-at-power {} 110.0)]
+      (is (< (:i-density lo) (:i-density hi)))
+      (is (> (:eff-LHV lo) (:eff-LHV hi))))))
+
+(deftest unreachable-power-is-reported-not-fabricated
+  (testing "a demand above the achievable peak returns feasible=false at the peak"
+    (let [r (fc/solve-at-power {} 5000.0)]
+      (is (false? (:feasible r)))
+      (is (= (:stack-kW r) (:peak-kW r))
+          "fallback point is the peak, not a made-up solution"))))
+
+(deftest h2-consumption-is-faraday-consistent
+  (testing "ṁ·LHV(H2) must reproduce the stack power (internal consistency, no new constants)"
+    (let [r (fc/solve-at-power {:p-stack-kW-target 90.0} 90.0)
+          ;; chemical H2 power (LHV) × cell efficiency = electrical stack power
+          chem-w (* (:h2-g-per-s r) 1.0e-3 fc/h2-lhv-j-per-kg)
+          stack-w (* 1000.0 (:stack-kW r))]
+      (is (pos? (:h2-g-per-s r)))
+      (is (< (Math/abs (- (* chem-w (:eff-LHV r)) stack-w)) (* 1.0e-6 stack-w))
+          (str "ṁ·LHV·η=" (* chem-w (:eff-LHV r)) " W vs stack=" stack-w " W")))))
+
+(deftest h2-scales-with-current-not-efficiency
+  (testing "Faraday's law: ṁ is linear in current density at fixed geometry"
+    (let [a (fc/solve {:i-density 0.5})
+          b (fc/solve {:i-density 1.0})]
+      (is (< 1.9 (/ (:h2-g-per-s b) (:h2-g-per-s a)) 2.1)
+          "doubling current doubles H2 rate (2F per mol H2, exactly)"))))
