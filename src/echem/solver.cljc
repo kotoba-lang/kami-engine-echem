@@ -134,6 +134,35 @@
 
 (defmethod cae/solve :rom-fc [case] (solve case))
 
+(defn run-at-power
+  "Datafied power-targeted operating point: `solve-at-power` + the same datom
+  logging as `run`. Downstream vehicle sizing (kami-engine-vehicle-designer
+  :cae-probe) needs the efficiency *at the stack power the vehicle demands*;
+  `run` alone always solves at the fixed default current density, so its
+  logged FuelCellRun would disagree with a power-targeted concept. `p-kw` is
+  the demanded stack power (kW); `case` may carry `:case/id` and any
+  polarization overrides. Returns the `solve-at-power` result plus
+  `:datoms` / `:datom-count` (never a fabricated point — infeasible demands
+  log the peak with :feasible false)."
+  ([case p-kw]
+   (let [r   (solve-at-power case p-kw)
+         cid (or (:case/id case) "fc-at-power-0")
+         ent (d/entity "echem" :FuelCellRun cid
+                       {:cells   (:cells r)
+                        :vCellMv (Math/round (* 1000.0 (:v-cell r)))
+                        :effPct  (Math/round (* 100.0 (:eff-LHV r)))
+                        :stackKW (Math/round (double (:stack-kW r)))})
+         led (d/log [ent])]
+     (assoc r :datoms (:datoms led) :datom-count (:count led)))))
+
+(defmethod cae/solve :rom-fc-at-power
+  [{:keys [p-kw] :as case}]
+  (when-not (pos? p-kw)
+    (throw (ex-info "rom-fc-at-power: :p-kw must be a positive number (kW)"
+                    {:p-kw p-kw})))
+  (assoc (solve-at-power (dissoc case :solver :p-kw) p-kw)
+         :solver :rom-fc-at-power))
+
 (defn run [case]
   (let [r   (solve case)
         cid (or (:case/id case) "fc-0")
