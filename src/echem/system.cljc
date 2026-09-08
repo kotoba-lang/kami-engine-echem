@@ -46,7 +46,7 @@
   provenance strings (:bop-source, :dc-dc-source) are REQUIRED and
   echoed — an efficiency claim travels with its evidence or the call
   fails."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [echem.solver :as fc]
             [cae.solver :as cae]))
 
