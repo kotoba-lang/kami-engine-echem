@@ -1,5 +1,5 @@
 (ns echem.stack-thermal-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [echem.solver :as fc]
             [echem.stack-thermal :as st]
             [cae.solver :as cae]))

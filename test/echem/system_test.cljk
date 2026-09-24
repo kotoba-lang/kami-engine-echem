@@ -1,5 +1,5 @@
 (ns echem.system-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [echem.solver :as fc]
             [echem.system :as sys]
             [cae.solver :as cae]))
