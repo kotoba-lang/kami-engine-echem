@@ -151,7 +151,7 @@
 (defn demand-point
   "Full vehicle-plane closure: given a required NET bus power and the
   same BoP group, invert to the gross stack operating point. The stack
-  must produce (net / (1 − bop-frac)) gross — with an absolute :bop-kw
+  must produce (bus / dc-dc-eff / (1 − bop-frac)) gross — with an absolute :bop-kw
   the inversion is direct; with a fractional :bop-frac it solves
   P-net = P-stack·(1 − frac) exactly. Uses echem.solver/solve-at-power
   on the polarization curve for the gross point, so the operating
@@ -175,10 +175,17 @@
                                        {:bop-frac bop-frac})))
                      bop-frac)
                  0.0)
-          ;; gross needed so that net survives BOTH the fractional and the
-          ;; absolute BoP draw: P-gross = (P-net + bop-kw) / (1 − frac)
+          dc-eff (if (some? (:dc-dc-eff c))
+                   (let [eff (:dc-dc-eff c)]
+                     (when-not (and (finite? eff) (< 0.0 eff) (<= eff 1.0))
+                       (throw (ex-info "demand-point: :dc-dc-eff must be in (0, 1]"
+                                       {:dc-dc-eff eff})))
+                     (require-provenance (:dc-dc-source c) :dc-dc-source)
+                     eff)
+                   1.0)
+          ;; Invert the full bus chain, including DC/DC loss and BoP draw.
           bop-abs (or bop-kw 0.0)
-          p-gross (/ (+ p-net-kw bop-abs) (- 1.0 frac))
+          p-gross (/ (+ (/ p-net-kw dc-eff) bop-abs) (- 1.0 frac))
           rom (fc/solve-at-power (select-keys case
                                               [:cells :area-cm2 :T-K
                                                :pt-loading :E0 :tafel-b
