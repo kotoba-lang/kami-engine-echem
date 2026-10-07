@@ -1,11 +1,45 @@
 (ns echem.profile-test
   (:require [kotoba.test :refer [deftest is testing]]
-            [echem.solver :as fc]
             [echem.system :as sys]
-            [echem.profile :as prof]))
+            [echem.profile :as prof]
+            [cae.solver :as cae]))
 
 (def case
   {:bop-frac 0.15 :bop-source "fixture: synthetic screening value"})
+
+(deftest skips-preserve-the-original-time-grid
+  (let [r (prof/demand-profile case
+            {:p-net-kw [80.0 1.0e6 80.0 80.0] :dt-s 10.0
+             :profile-source "fixture: separated feasible intervals" :on-infeasible :skip})
+        rate (:h2-kg-per-s (sys/demand-point case 80.0))]
+    (is (< (Math/abs (- (:h2-kg r) (* rate 10.0))) 1.0e-12))
+    (is (= (/ 800.0 3600.0) (:energy-kwh-net r)))
+    (is (= 10.0 (:integrated-duration-s r)))
+    (is (= [0 1] (:skipped-interval-indices r)))))
+
+(deftest isolated-feasible-samples-do-not-create-an-interval
+  (doseq [powers [[80.0 1.0e6] [1.0e6 80.0] [80.0 1.0e6 80.0]]]
+    (let [r (prof/demand-profile case
+              {:p-net-kw powers :dt-s 10.0 :profile-source "fixture: no known interval"
+               :on-infeasible :skip})]
+      (is (zero? (:h2-kg r)))
+      (is (zero? (:energy-kwh-net r)))
+      (is (zero? (:integrated-duration-s r))))))
+
+(deftest dc-dc-demand-hits-bus-target-and-energy-identity
+  (doseq [bop [{:bop-frac 0.15} {:bop-kw 5.0}]]
+   (let [r (prof/demand-profile
+            (merge bop {:bop-source "fixture" :dc-dc-eff 0.97 :dc-dc-source "fixture"})
+            {:p-net-kw [80.0 80.0] :dt-s 10.0 :profile-source "fixture"})
+        pt (first (:points r))
+        chemical-kwh (/ (* (:h2-kg r) sys/h2-lhv-j-per-kg) 3.6e6)]
+    (is (< (Math/abs (- 80.0 (:bus-kw pt))) 1.0e-6))
+    (is (< (Math/abs (- (:energy-kwh-net r) (* chemical-kwh (:eta-bus-min r)))) 1.0e-8)))))
+
+(deftest profile-registers-the-common-solver-contract
+  (let [c {:bop-frac 0.15 :bop-source "fixture" :p-net-kw [80.0 80.0]
+           :dt-s 10.0 :profile-source "fixture" :solver {:kind :rom-fc-profile}}]
+    (is (= (prof/demand-profile c c) (cae/solve c)))))
 
 (def req
   {:p-net-kw [80.0 80.0 80.0 80.0]

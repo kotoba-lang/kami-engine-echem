@@ -25,7 +25,9 @@
   Infeasible samples (net demand above what the stack + BoP group can
   deliver) are NEVER silently integrated: by default the call refuses with
   the offending indices; with :on-infeasible :skip the caller takes
-  responsibility and the skipped samples are counted and reported.
+  responsibility and the skipped samples are counted and reported. Only
+  original adjacent intervals with two feasible endpoints are integrated;
+  isolated feasible samples contribute zero duration, never bridge a gap.
 
   Required inputs:
     :p-net-kw       vector of net bus power samples (kW), each finite ≥ 0,
@@ -43,7 +45,8 @@
   purge/recirculation, DC/DC part-load efficiency curve, and the
   interpolation error of the trapezoidal rule on a coarse duty cycle."
   (:require [kotoba.lang.text :as str]
-            [echem.system :as sys]))
+            [echem.system :as sys]
+            [cae.solver :as cae]))
 
 (defn- finite? [x]
   ;; NaN check without java.lang.Double so the .cljc stays portable:
@@ -56,17 +59,16 @@
                     {k x}))))
 
 (defn- trapezoid
-  "Trapezoidal integral of the sample vector over the uniform interval dt."
-  [vs dt]
-  (let [n (count vs)]
-    (* dt (+ (/ (nth vs 0) 2.0)
-             (reduce + 0.0 (subvec vs 1 (dec n)))
-             (/ (nth vs (dec n)) 2.0)))))
+  "Integrate only original adjacent intervals whose endpoints are feasible."
+  [intervals k dt]
+  (* dt (reduce + 0.0
+                (map (fn [[a b]] (/ (+ (get a k) (get b k)) 2.0)) intervals))))
 
 (defn demand-profile
   "Integrate a net-bus-power duty cycle through the demand-following ROM
   closure. Returns total :h2-kg, :energy-kwh-net, the efficiency envelope,
-  per-sample :points (for downstream composition), provenance, and the
+  per-sample :points (for downstream composition), covered duration and
+  skipped interval indices, provenance, and the
   declared :unmeasured gaps. Exact closed-form identities for constant and
   two-sample profiles are checked in tests."
   [case {:keys [p-net-kw dt-s profile-source on-infeasible]}]
@@ -84,11 +86,11 @@
     (when-not (nil? on-infeasible)
       (throw (ex-info "profile: :on-infeasible must be :skip or nil (default refuses)"
                       {:on-infeasible on-infeasible}))))
-  (let [pts  (map-indexed
+  (let [pts  (vec (map-indexed
               (fn [idx p]
                 (assoc (sys/demand-point case p)
                        :sample idx :p-net-kw-target p))
-              p-net-kw)
+              p-net-kw))
         bad  (filterv #(not (:feasible %)) pts)
         good (if (= :skip on-infeasible)
                (filterv :feasible pts)
@@ -103,15 +105,20 @@
     (when (empty? good)
       (throw (ex-info "profile: no feasible samples to integrate"
                       {:infeasible-count (count bad)})))
-    (let [h2-kg   (trapezoid ms dt-s)
-          e-kwh   (/ (trapezoid vs dt-s) 3600.0)
+    (let [intervals (mapv vector pts (rest pts))
+          covered (filterv (fn [[a b]] (and (:feasible a) (:feasible b))) intervals)
+          skipped (filterv (fn [[a b]] (not (and (:feasible a) (:feasible b)))) intervals)
+          h2-kg   (trapezoid covered :h2-kg-per-s dt-s)
+          e-kwh   (/ (trapezoid covered :p-net-kw-target dt-s) 3600.0)
           etas    (mapv :eta-sys good)
-          buses   (mapv :bus-kw good)
           any-bus (some :eta-bus good)
           firstpt (first good)]
       (cond-> {:solver :rom-fc-profile
                :samples (count good)
                :dt-s dt-s
+               :profile-duration-s (* (dec (count pts)) dt-s)
+               :integrated-duration-s (* (count covered) dt-s)
+               :skipped-interval-indices (mapv (comp :sample first) skipped)
                :h2-kg h2-kg
                :energy-kwh-net e-kwh
                :eta-sys-min (apply min etas)
@@ -122,7 +129,7 @@
                :infeasible-indices (mapv :sample bad)
                :points (mapv #(select-keys %
                                            [:sample :p-net-kw-target :stack-kw
-                                            :net-kw :bus-kw :eff-lhv :eta-sys
+                                            :net-kw :bus-kw :eff-lhv :eta-sys :eta-bus
                                             :h2-kg-per-s :feasible])
                              good)
                :provenance (merge (:provenance firstpt)
@@ -135,3 +142,5 @@
                             :infeasible-gap (pos? (count bad))}}
         any-bus (assoc :eta-bus-min (apply min (map :eta-bus (filter :eta-bus good)))
                        :eta-bus-max (apply max (map :eta-bus (filter :eta-bus good))))))))
+
+(defmethod cae/solve :rom-fc-profile [case] (demand-profile case case))
